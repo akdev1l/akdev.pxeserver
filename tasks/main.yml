@@ -1,0 +1,69 @@
+---
+- name: install tftp packages
+  yum:
+    name:
+      - tftp-server
+      - httpd
+      - grub2-efi-x64
+      - grub2-efi-ia32
+      - shim
+    state: present
+
+- name: install uboot for ARM booting
+  when: pxe_arm_enabled
+  yum:
+    name:
+      - uboot-images-armv8
+      - uboot-images-armv7
+    state: present
+
+- name: open firewall ports
+  firewalld:
+    service: "{{item}}"
+    state: enabled
+    permanent: yes
+  loop:
+    - http
+    - tftp
+
+- name: create mountpoints
+  file:
+    state: directory
+    path: "{{item}}"
+  loop:
+    - "{{pxe_http_dir}}/os"
+    - "{{pxe_http_dir}}/ks"
+
+- name: copy grub boot files
+  shell: "rpm -ql {{item|quote}} | xargs -I@ cp @ {{pxe_tftp_dir}} 2>/dev/null || true"
+  loop:
+    - grub2-efi-x64
+    - grub2-efi-ia32
+    - shim
+
+- name: copy uboot boot files
+  shell: "rpm -ql {{item|quote}} | xargs -I@ cp @ {{pxe_tftp_dir}} 2>/dev/null"
+  when: pxe_arm_enabled
+  loop:
+    - uboot-images-armv8
+    - uboot-images-armv7
+
+- name: prepare distros
+  vars:
+    current_distro: "{{item}}"
+  include_tasks: distro.yml
+  loop: "{{pxe_distro_list}}"
+
+- name: deploy grub configuration
+  template:
+    src: grub.cfg.j2
+    dest: "{{pxe_tftp_dir}}/grub.cfg"
+
+- name: enable PXE services
+  systemd:
+    name: "{{item}}"
+    state: started
+    enabled: yes
+  loop:
+    - tftp.socket
+    - httpd.service
